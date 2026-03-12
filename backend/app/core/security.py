@@ -30,3 +30,22 @@ def verify_access_token(token: str) -> dict | None:
         return payload
     except JWTError:
         return None
+
+
+def validate_password_strength(password: str) -> str | None:
+    if len(password) < 8 or len(password) > 24:
+        return "Password must be between 8 and 24 characters."
+
+    if not re.search(r"[A-Z]", password):
+        return "Password must contain at least 1 uppercase letter."
+
+    if not re.search(r"[a-z]", password):
+        return "Password must contain at least 1 lowercase letter."
+
+    if not re.search(r"[0-9]", password):
+        return "Password must contain at least 1 number."
+
+    if not re.search(r"[!@#$%^&*()_\-+=\[{\]};:,.<>?/\\|`~'\"]", password):
+        return "Password must contain at least 1 special character."
+
+    return None

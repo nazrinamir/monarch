@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.db.models import User
 from app.schemas.auth import RegisterRequest, LoginRequest
 from app.core.security import (
@@ -10,18 +10,11 @@ from app.core.security import (
     verify_password,
     create_access_token,
     verify_access_token,
+    validate_password_strength,
 )
 
 router = APIRouter(prefix="/api", tags=["Authentication"])
 security = HTTPBearer()
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -34,10 +27,19 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             detail="Email already registered",
         )
 
+    password_error = validate_password_strength(data.password)
+    if password_error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=password_error,
+        )
+
     new_user = User(
         name=data.name,
         email=data.email,
         password=hash_password(data.password),
+        failed_login_attempts=0,
+        is_locked=False,
     )
 
     db.add(new_user)
@@ -64,11 +66,35 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             detail="Invalid email or password",
         )
 
+    if user.is_locked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been locked after 3 failed login attempts.",
+        )
+
     if not verify_password(data.password, user.password):
+        user.failed_login_attempts += 1
+
+        if user.failed_login_attempts >= 3:
+            user.is_locked = True
+
+        db.commit()
+
+        if user.is_locked:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account has been locked after 3 failed login attempts.",
+            )
+
+        remaining_attempts = 3 - user.failed_login_attempts
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail=f"Invalid email or password. {remaining_attempts} login attempt(s) remaining before account lock.",
         )
+
+    user.failed_login_attempts = 0
+    user.is_locked = False
+    db.commit()
 
     access_token = create_access_token(
         data={
